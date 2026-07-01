@@ -1,4 +1,4 @@
-// app/lecture/page.tsx
+// app/lecture/lectureclient.tsx (or app/lecture/page.tsx)
 
 'use client';
 
@@ -7,7 +7,8 @@ import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { Document, Page, pdfjs } from 'react-pdf';
 import { Button } from '@/components/ui/button';
 import { classifyText } from '@/lib/classifier';
-// This configuration is mandatory for react-pdf to process files
+
+// Configure the PDF worker to render PDF pages
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 interface TranscriptEntry {
@@ -22,11 +23,13 @@ export default function LecturePage() {
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [recognition, setRecognition] = useState<any>(null);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [numPages, setNumPages] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [debugInfo, setDebugInfo] = useState<string[]>([]);
+  
+  // Using a ref for the speech recognition instance to manage its lifecycle safely across renders
+  const recognitionRef = useRef<any>(null);
 
   // Debug logger
   const addDebug = (msg: string) => {
@@ -34,9 +37,37 @@ export default function LecturePage() {
     setDebugInfo(prev => [...prev, msg]);
   };
 
+  // Safe localStorage transcription loader on mount
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    try {
+      const savedTranscript = localStorage.getItem('transcriptData');
+      if (!savedTranscript) return;
+
+      const parsed = JSON.parse(savedTranscript);
+      const entries = Array.isArray(parsed)
+        ? parsed.map((entry: any, index: number) => ({
+            id: entry.id || `${Date.now()}-${index}`,
+            text: entry.text || '',
+            timestamp: entry.timestamp || entry.start || Date.now(),
+            type: entry.type || 'explanation',
+            color: entry.color || '#94a3b8',
+          }))
+        : [];
+
+      if (entries.length > 0) {
+        setTranscript(entries);
+        addDebug('✅ Successfully initialized transcript from upload payload');
+      }
+    } catch (err) {
+      console.error('Failed to load saved transcript:', err);
+    }
+  }, []);
+
   // Initialize Speech Recognition
   useEffect(() => {
-    addDebug('useEffect called');
+    addDebug('Initializing Speech Engine...');
 
     if (typeof window === 'undefined') {
       addDebug('window is undefined (SSR)');
@@ -56,10 +87,8 @@ export default function LecturePage() {
       rec.interimResults = true;
       rec.lang = 'en-US';
 
-      // Updated to target only the latest finalized speech index to avoid duplicates
+      // Capture only the latest finalized spoken index to avoid list duplication
       rec.onresult = (event: any) => {
-        addDebug('onresult triggered');
-        
         const currentResultIndex = event.resultIndex;
         const result = event.results[currentResultIndex];
         
@@ -67,9 +96,7 @@ export default function LecturePage() {
           const finalText = result[0].transcript.trim();
           
           if (finalText) {
-            addDebug(`Transcript text received: "${finalText}"`);
-            
-            // Use classifier to extract types and color mappings
+            addDebug(`New incoming segment: "${finalText}"`);
             const classification = classifyText(finalText);
             
             const newEntry: TranscriptEntry = {
@@ -86,45 +113,52 @@ export default function LecturePage() {
       };
 
       rec.onstart = () => {
-        addDebug('🎤 Recording started!');
+        addDebug('🎤 Recording active');
         setIsRecording(true);
       };
 
       rec.onend = () => {
-        addDebug('⏹️ Recording ended');
+        addDebug('⏹️ Recording stopped');
         setIsRecording(false);
       };
 
       rec.onerror = (event: any) => {
-        addDebug(`❌ Error: ${event.error}`);
+        addDebug(`❌ Error Event: ${event.error}`);
         setError(`Error: ${event.error}`);
         setIsRecording(false);
       };
 
-      setRecognition(rec);
-      addDebug('✅ Speech Engine initialized');
+      recognitionRef.current = rec;
+      addDebug('✅ Speech Engine successfully set up');
     } catch (err) {
-      addDebug(`❌ Exception: ${err}`);
+      addDebug(`❌ Engine setup failed: ${err}`);
       setError(`Failed to initialize: ${err}`);
     }
+
+    // Cleanup subscription on unmount to prevent browser microphone leaks
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+    };
   }, []);
 
   const toggleRecording = async () => {
-    if (!recognition) {
-      setError('Speech recognition not available.');
+    if (!recognitionRef.current) {
+      setError('Speech recognition engine is not initialized.');
       return;
     }
 
     if (isRecording) {
       try {
-        recognition.stop();
+        recognitionRef.current.stop();
       } catch (err) {
         addDebug(`❌ Error stopping: ${err}`);
       }
     } else {
       try {
         await navigator.mediaDevices.getUserMedia({ audio: true });
-        recognition.start();
+        recognitionRef.current.start();
         setError(null);
       } catch (err) {
         setError('Microphone access denied. Please allow microphone permissions.');
@@ -136,6 +170,9 @@ export default function LecturePage() {
     setTranscript([]);
     setError(null);
     setDebugInfo([]);
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('transcriptData');
+    }
   };
 
   const handlePdfUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -208,15 +245,19 @@ export default function LecturePage() {
                   {transcript.map((entry) => (
                     <div
                       key={entry.id}
-                      className="p-3 rounded-lg border-l-4 bg-background shadow-sm"
-                      style={{ borderLeftColor: entry.color || '#6b7280' }}
+                      className="p-3 rounded-lg border-l-4 shadow-sm transition-all"
+                      // Subtle card tinting based on categorization colors
+                      style={{ 
+                        borderLeftColor: entry.color || '#6b7280',
+                        backgroundColor: entry.color ? `${entry.color}0a` : 'var(--background)'
+                      }}
                     >
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-xs text-muted-foreground">
                           {new Date(entry.timestamp).toLocaleTimeString()}
                         </span>
                         <span 
-                          className="text-xs px-2 py-0.5 rounded-full font-mono uppercase bg-muted"
+                          className="text-[10px] px-2 py-0.5 rounded-full font-mono uppercase bg-muted font-bold"
                           style={{ color: entry.color || '#6b7280' }}
                         >
                           {entry.type}
@@ -230,8 +271,10 @@ export default function LecturePage() {
             </div>
           </Panel>
 
-          {/* Resizable drag divider */}
-          <PanelResizeHandle className="w-1.5 bg-border hover:bg-primary/50 transition-colors cursor-col-resize" />
+          {/* Resizable drag divider containing a centered grip visual element */}
+          <PanelResizeHandle className="w-1.5 bg-border hover:bg-primary/50 transition-colors cursor-col-resize flex items-center justify-center relative">
+            <div className="w-0.5 h-12 bg-muted-foreground/30 rounded-full" />
+          </PanelResizeHandle>
 
           {/* Right Column: PDF Viewer Pane */}
           <Panel defaultSize={50} minSize={30}>
