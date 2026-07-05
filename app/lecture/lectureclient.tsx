@@ -1,4 +1,4 @@
-// app/lecture/lectureclient.tsx (or app/lecture/page.tsx)
+// app/lecture/lectureclient.tsx
 
 'use client';
 
@@ -7,6 +7,7 @@ import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { Document, Page, pdfjs } from 'react-pdf';
 import { Button } from '@/components/ui/button';
 import { classifyText } from '@/lib/classifier';
+import NotesPanel from '@/components/notes/NotesPanel';
 
 // Configure the PDF worker to render PDF pages
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
@@ -17,6 +18,7 @@ interface TranscriptEntry {
   timestamp: number;
   type: string;
   color: string;
+  slideNumber: number;
 }
 
 export default function LecturePage() {
@@ -28,44 +30,67 @@ export default function LecturePage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [debugInfo, setDebugInfo] = useState<string[]>([]);
   
-  // Using a ref for the speech recognition instance to manage its lifecycle safely across renders
+  // Slide Tracking States
+  const [currentSlide, setCurrentSlide] = useState<number>(1);
+  const pdfContainerRef = useRef<HTMLDivElement>(null);
+  
+  // Refs for tracking mutable states inside asynchronous listeners
+  const currentSlideRef = useRef<number>(1);
+  const isScrollingRef = useRef<boolean>(false);
   const recognitionRef = useRef<any>(null);
+
+  // Sync the slide ref whenever state changes
+  useEffect(() => {
+    currentSlideRef.current = currentSlide;
+  }, [currentSlide]);
 
   // Debug logger
   const addDebug = (msg: string) => {
     console.log('🔍', msg);
-    setDebugInfo(prev => [...prev, msg]);
+    setDebugInfo(prev => [...prev.slice(-49), msg]); // Cap log arrays at 50
   };
 
-  // Safe localStorage transcription loader on mount
+  // EFFECT 1: Safely load saved Transcript and PDF Base64 string on mount
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
     try {
+      // 1. Load Transcription Data
       const savedTranscript = localStorage.getItem('transcriptData');
-      if (!savedTranscript) return;
+      if (savedTranscript) {
+        const parsed = JSON.parse(savedTranscript);
+        const entries = Array.isArray(parsed)
+          ? parsed.map((entry: any, index: number) => ({
+              id: entry.id || `${Date.now()}-${index}`,
+              text: entry.text || '',
+              timestamp: entry.timestamp || entry.start || Date.now(),
+              type: entry.type || 'explanation',
+              color: entry.color || '#94a3b8',
+              slideNumber: entry.slideNumber || 1,
+            }))
+          : [];
 
-      const parsed = JSON.parse(savedTranscript);
-      const entries = Array.isArray(parsed)
-        ? parsed.map((entry: any, index: number) => ({
-            id: entry.id || `${Date.now()}-${index}`,
-            text: entry.text || '',
-            timestamp: entry.timestamp || entry.start || Date.now(),
-            type: entry.type || 'explanation',
-            color: entry.color || '#94a3b8',
-          }))
-        : [];
+        if (entries.length > 0) {
+          setTranscript(entries);
+          addDebug('✅ Successfully initialized transcript from local storage');
+        }
+      }
 
-      if (entries.length > 0) {
-        setTranscript(entries);
-        addDebug('✅ Successfully initialized transcript from upload payload');
+      // 2. Load PDF Base64 Data and auto-initialize the Slides panel
+      const savedPdfBase64 = localStorage.getItem('pdfData');
+      const savedPdfName = localStorage.getItem('pdfFileName') || 'uploaded_slides.pdf';
+      
+      if (savedPdfBase64) {
+        const pdfDataUri = `data:application/pdf;base64,${savedPdfBase64}`;
+        setPdfFile(pdfDataUri as unknown as File);
+        addDebug(`✅ Auto-loaded PDF slides: ${savedPdfName}`);
       }
     } catch (err) {
-      console.error('Failed to load saved transcript:', err);
+      console.error('Failed to load saved session data:', err);
     }
   }, []);
 
-  // Initialize Speech Recognition
+  // EFFECT 2: Initialize Speech Recognition engine
   useEffect(() => {
     addDebug('Initializing Speech Engine...');
 
@@ -96,7 +121,7 @@ export default function LecturePage() {
           const finalText = result[0].transcript.trim();
           
           if (finalText) {
-            addDebug(`New incoming segment: "${finalText}"`);
+            addDebug(`Transcript text received: "${finalText}"`);
             const classification = classifyText(finalText);
             
             const newEntry: TranscriptEntry = {
@@ -105,6 +130,7 @@ export default function LecturePage() {
               timestamp: Date.now(),
               type: classification.type,
               color: classification.color,
+              slideNumber: currentSlideRef.current, // Tag live transcripts with the current active slide
             };
             
             setTranscript(prev => [...prev, newEntry]);
@@ -112,26 +138,16 @@ export default function LecturePage() {
         }
       };
 
-      rec.onstart = () => {
-        addDebug('🎤 Recording active');
-        setIsRecording(true);
-      };
-
-      rec.onend = () => {
-        addDebug('⏹️ Recording stopped');
-        setIsRecording(false);
-      };
-
+      rec.onstart = () => setIsRecording(true);
+      rec.onend = () => setIsRecording(false);
       rec.onerror = (event: any) => {
-        addDebug(`❌ Error Event: ${event.error}`);
         setError(`Error: ${event.error}`);
         setIsRecording(false);
       };
 
       recognitionRef.current = rec;
-      addDebug('✅ Speech Engine successfully set up');
+      addDebug('✅ Speech Engine initialized');
     } catch (err) {
-      addDebug(`❌ Engine setup failed: ${err}`);
       setError(`Failed to initialize: ${err}`);
     }
 
@@ -143,9 +159,65 @@ export default function LecturePage() {
     };
   }, []);
 
+  // EFFECT 3: Global Keyboard listeners for navigation (Arrows)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const targetTag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+      if (targetTag === 'input' || targetTag === 'textarea' || !numPages) return;
+
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        handleTranscriptClick(Math.max(1, currentSlide - 1));
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        handleTranscriptClick(Math.min(numPages, currentSlide + 1));
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [currentSlide, numPages]);
+
+  // EFFECT 4: Intersection Observer to sync manual scrolling with the page indicators
+  useEffect(() => {
+    const container = pdfContainerRef.current;
+    if (!container || !numPages) return;
+
+    const options = {
+      root: container,
+      rootMargin: '0px',
+      threshold: 0.5, // Slide is considered active when 50% visible
+    };
+
+    const callback = (entries: IntersectionObserverEntry[]) => {
+      // Bypasses sync checks if we are mid-smooth-scroll from a transcript click
+      if (isScrollingRef.current) return;
+
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          const id = entry.target.id;
+          const slideNum = parseInt(id.replace('slide-', ''), 10);
+          if (!isNaN(slideNum)) {
+            setCurrentSlide(slideNum);
+          }
+        }
+      });
+    };
+
+    const observer = new IntersectionObserver(callback, options);
+
+    // Watch each slide container
+    for (let i = 1; i <= numPages; i++) {
+      const el = document.getElementById(`slide-${i}`);
+      if (el) observer.observe(el);
+    }
+
+    return () => observer.disconnect();
+  }, [numPages]);
+
   const toggleRecording = async () => {
     if (!recognitionRef.current) {
-      setError('Speech recognition engine is not initialized.');
+      setError('Speech recognition not available.');
       return;
     }
 
@@ -172,6 +244,9 @@ export default function LecturePage() {
     setDebugInfo([]);
     if (typeof window !== 'undefined') {
       localStorage.removeItem('transcriptData');
+      localStorage.removeItem('pdfData');
+      localStorage.removeItem('pdfFileName');
+      localStorage.removeItem('stenoStack_notes');
     }
   };
 
@@ -185,6 +260,24 @@ export default function LecturePage() {
 
   const onDocumentLoadSuccess = ({ numPages }: { numPages: number }) => {
     setNumPages(numPages);
+  };
+
+  // Smooth-scroll handle to focus right panel on target slide page
+  const handleTranscriptClick = (slideNumber: number) => {
+    isScrollingRef.current = true;
+    setCurrentSlide(slideNumber);
+
+    if (pdfContainerRef.current) {
+      const slideElement = document.getElementById(`slide-${slideNumber}`);
+      if (slideElement) {
+        slideElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+
+    // Reset scroll lock after smooth scroll animation completes
+    setTimeout(() => {
+      isScrollingRef.current = false;
+    }, 800);
   };
 
   return (
@@ -227,14 +320,14 @@ export default function LecturePage() {
         )}
       </div>
 
-      {/* Split-Pane Workspace */}
+      {/* Split-Pane Workspace (Now splits horizontally into 3 columns!) */}
       <div className="flex-1 min-h-0">
         <PanelGroup direction="horizontal">
           
-          {/* Left Column: Transcript Pane */}
-          <Panel defaultSize={50} minSize={30}>
+          {/* Column 1: Live Transcript Pane */}
+          <Panel defaultSize={33} minSize={20}>
             <div className="h-full overflow-y-auto p-6 bg-card flex flex-col">
-              <h2 className="text-lg font-semibold mb-4">Live Transcript</h2>
+              <h2 className="text-lg font-semibold mb-4 font-sans">Live Transcript</h2>
               
               {transcript.length === 0 ? (
                 <div className="text-center py-12 text-muted-foreground my-auto">
@@ -245,25 +338,33 @@ export default function LecturePage() {
                   {transcript.map((entry) => (
                     <div
                       key={entry.id}
-                      className="p-3 rounded-lg border-l-4 shadow-sm transition-all"
-                      // Subtle card tinting based on categorization colors
+                      onClick={() => handleTranscriptClick(entry.slideNumber)}
+                      className={`p-3 rounded-lg border-l-4 shadow-sm transition-all cursor-pointer hover:bg-muted/40 hover:scale-[1.01] active:scale-[0.99] ${
+                        currentSlide === entry.slideNumber ? 'bg-muted/30 shadow-md' : 'bg-background'
+                      }`}
                       style={{ 
                         borderLeftColor: entry.color || '#6b7280',
-                        backgroundColor: entry.color ? `${entry.color}0a` : 'var(--background)'
+                        backgroundColor: entry.color ? `${entry.color}0a` : undefined
                       }}
                     >
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-xs text-muted-foreground">
                           {new Date(entry.timestamp).toLocaleTimeString()}
                         </span>
-                        <span 
-                          className="text-[10px] px-2 py-0.5 rounded-full font-mono uppercase bg-muted font-bold"
-                          style={{ color: entry.color || '#6b7280' }}
-                        >
-                          {entry.type}
-                        </span>
+                        
+                        <div className="flex gap-1.5 items-center">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-bold">
+                            Slide {entry.slideNumber}
+                          </span>
+                          <span 
+                            className="text-[10px] px-2 py-0.5 rounded-full font-mono uppercase bg-muted font-bold"
+                            style={{ color: entry.color || '#6b7280' }}
+                          >
+                            {entry.type}
+                          </span>
+                        </div>
                       </div>
-                      <p className="text-sm text-foreground">{entry.text}</p>
+                      <p className="text-sm text-foreground leading-relaxed">{entry.text}</p>
                     </div>
                   ))}
                 </div>
@@ -271,32 +372,69 @@ export default function LecturePage() {
             </div>
           </Panel>
 
-          {/* Resizable drag divider containing a centered grip visual element */}
+          {/* First drag divider */}
           <PanelResizeHandle className="w-1.5 bg-border hover:bg-primary/50 transition-colors cursor-col-resize flex items-center justify-center relative">
             <div className="w-0.5 h-12 bg-muted-foreground/30 rounded-full" />
           </PanelResizeHandle>
 
-          {/* Right Column: PDF Viewer Pane */}
-          <Panel defaultSize={50} minSize={30}>
-            <div className="h-full overflow-y-auto p-6 bg-background">
-              <h2 className="text-lg font-semibold mb-4 font-sans">Slides Panel</h2>
+          {/* Column 2: PDF Slides Panel (Middle Column) */}
+          <Panel defaultSize={34} minSize={20}>
+            <div 
+              ref={pdfContainerRef} 
+              className="h-full overflow-y-auto p-6 bg-background scroll-smooth"
+            >
+              <div className="flex items-center justify-between mb-4 border-b pb-2 flex-shrink-0">
+                <h2 className="text-lg font-semibold font-sans">Slides Panel</h2>
+                {numPages && (
+                  <div className="flex gap-2 items-center">
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => handleTranscriptClick(Math.max(1, currentSlide - 1))}
+                      disabled={currentSlide === 1}
+                    >
+                      ←
+                    </Button>
+                    <span className="text-xs font-mono font-bold px-2.5 py-1 bg-muted rounded min-w-[50px] text-center">
+                      {currentSlide} / {numPages}
+                    </span>
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => handleTranscriptClick(Math.min(numPages, currentSlide + 1))}
+                      disabled={currentSlide === numPages}
+                    >
+                      →
+                    </Button>
+                  </div>
+                )}
+              </div>
               
               {pdfFile ? (
                 <div className="space-y-4 flex flex-col items-center">
                   <Document
                     file={pdfFile}
                     onLoadSuccess={onDocumentLoadSuccess}
-                    className="flex flex-col items-center"
+                    onLoadError={() => setError('Failed to render PDF file. Check encoding.')}
+                    className="flex flex-col items-center w-full"
                   >
                     {Array.from(new Array(numPages), (_, index) => (
-                      <div key={index} className="mb-6 border rounded shadow-md bg-white p-2 max-w-full">
+                      <div 
+                        key={index} 
+                        id={`slide-${index + 1}`}
+                        className={`mb-6 border rounded shadow-md p-2 max-w-full transition-all duration-300 ${
+                          currentSlide === index + 1 
+                            ? 'ring-2 ring-primary border-primary bg-primary/5 scale-[1.01]' 
+                            : 'bg-white border-border'
+                        }`}
+                      >
                         <Page
                           pageNumber={index + 1}
                           width={400}
                           renderTextLayer={false}
                           renderAnnotationLayer={false}
                         />
-                        <p className="text-xs text-center text-muted-foreground mt-2">
+                        <p className="text-xs text-center text-muted-foreground mt-2 font-mono">
                           Page {index + 1} of {numPages}
                         </p>
                       </div>
@@ -307,9 +445,21 @@ export default function LecturePage() {
                 <div className="text-center py-12 text-muted-foreground h-full flex flex-col justify-center items-center">
                   <p className="text-5xl mb-4">📄</p>
                   <p className="font-medium">No PDF uploaded</p>
-                  <p className="text-sm mt-1">Upload slides to see them displayed here alongside the transcript</p>
+                  <p className="text-sm mt-1">Upload slides to see them displayed here.</p>
                 </div>
               )}
+            </div>
+          </Panel>
+
+          {/* Second drag divider */}
+          <PanelResizeHandle className="w-1.5 bg-border hover:bg-primary/50 transition-colors cursor-col-resize flex items-center justify-center relative">
+            <div className="w-0.5 h-12 bg-muted-foreground/30 rounded-full" />
+          </PanelResizeHandle>
+
+          {/* Column 3: Slide-Locked Notes Panel (Right Column) */}
+          <Panel defaultSize={33} minSize={20}>
+            <div className="h-full overflow-y-auto p-6 bg-card border-l select-text">
+              <NotesPanel slideNumber={currentSlide} />
             </div>
           </Panel>
           

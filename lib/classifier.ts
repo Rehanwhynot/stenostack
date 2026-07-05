@@ -90,3 +90,17 @@ export function classifySegments(segments: { text: string; start: number; end: n
     matchedPage: 1,
   }));
 }
+// lib/classifier.ts - Add slide matching
+
+export function matchTranscriptToSlides(
+  transcript: string[],
+  numSlides: number
+): { text: string; slideNumber: number }[] {
+  // Distribute transcript evenly across slides
+  // In reality, you'd use AI to match text to slides
+  return transcript.map((text, index) => {
+    // Simple distribution: assign each transcript line to a slide
+    const slideNumber = (index % numSlides) + 1;
+    return { text, slideNumber };
+  });
+}

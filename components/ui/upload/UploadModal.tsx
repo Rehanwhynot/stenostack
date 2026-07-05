@@ -9,9 +9,10 @@ import { Button } from '@/components/ui/button';
 interface UploadModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onUpload?: (files: { audio: File; pdf: File }) => void; // Made optional to prevent compile errors
 }
 
-export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
+export default function UploadModal({ isOpen, onClose, onUpload }: UploadModalProps) {
   const router = useRouter();
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
@@ -19,6 +20,23 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
   const [error, setError] = useState<string | null>(null);
 
   if (!isOpen) return null;
+
+  // Helper function to safely read PDF and convert it to Base64 in local memory
+  const convertPdfToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const base64 = (e.target?.result as string).split(',')[1];
+          resolve(base64);
+        } catch (err) {
+          reject(err);
+        }
+      };
+      reader.onerror = (err) => reject(err);
+      reader.readAsDataURL(file);
+    });
+  };
 
   const handleUpload = async () => {
     if (!audioFile || !pdfFile) {
@@ -30,12 +48,10 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
     setError(null);
 
     try {
-      // Package files into FormData
       const formData = new FormData();
       formData.append('audio', audioFile);
       formData.append('pdf', pdfFile);
 
-      // Send files to your API route
       const response = await fetch('/api/transcribe', {
         method: 'POST',
         body: formData,
@@ -45,12 +61,28 @@ export default function UploadModal({ isOpen, onClose }: UploadModalProps) {
 
       if (data.success) {
         console.log('✅ Transcription successful:', data);
+
+        // Distribute transcript segments across slides dynamically
+        const transcriptWithSlides = data.segments.map((seg: any, index: number) => ({
+          ...seg,
+          slideNumber: (index % 5) + 1, // Distribute across 5 mock slides
+        }));
+
+        localStorage.setItem('transcriptData', JSON.stringify(transcriptWithSlides));
         
-        // Save the received segments to local storage so the lecture page can read them
-        localStorage.setItem('transcriptData', JSON.stringify(data.segments));
-        
-        // Close modal and navigate to the live lecture page
+        // Convert and store PDF in localStorage as a Base64 string
+        const base64Pdf = await convertPdfToBase64(pdfFile);
+        localStorage.setItem('pdfData', base64Pdf);
+        localStorage.setItem('pdfFileName', pdfFile.name);
+
+        // Trigger optional parent handler
+        if (onUpload) {
+          onUpload({ audio: audioFile, pdf: pdfFile });
+        }
+
         onClose();
+        
+        // Route to the lecture room
         router.push('/lecture');
       } else {
         setError(data.error || 'Transcription failed');
