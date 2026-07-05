@@ -2,7 +2,7 @@
 
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, type ChangeEvent } from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { Document, Page, pdfjs } from 'react-pdf';
 import { Button } from '@/components/ui/button';
@@ -23,6 +23,7 @@ interface TranscriptEntry {
 
 export default function LecturePage() {
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
@@ -250,13 +251,76 @@ export default function LecturePage() {
     }
   };
 
-  const handlePdfUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+
+
+  const handlePdfUpload = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
       setPdfFile(file);
       addDebug(`📄 PDF Loaded: ${file.name}`);
     }
   };
+  // Add this AFTER handlePdfUpload
+const handleAudioUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const file = event.target.files?.[0];
+  
+  // Debug: Log the file
+  console.log('🔍 File selected:', file ? file.name : 'No file');
+  
+  if (!file) {
+    console.log('❌ No file selected');
+    setError('Please select an audio file.');
+    return;
+  }
+  
+  console.log('✅ Audio file:', file.name, 'Size:', file.size, 'bytes');
+  
+  setIsUploading(true);
+  setError(null);
+  addDebug(`🎧 Uploading: ${file.name}`);
+  
+  try {
+    const formData = new FormData();
+    formData.append('audio', file);
+    
+    console.log('📤 Sending to /api/transcribe...');
+    
+    const response = await fetch('/api/transcribe', {
+      method: 'POST',
+      body: formData,
+    });
+    
+    console.log('📥 Response status:', response.status);
+    
+    const data = await response.json();
+    console.log('📦 Response data:', data);
+    
+    if (data.success) {
+      console.log('✅ Transcription success!');
+      addDebug(`✅ Transcribed: ${data.segments.length} segments`);
+      
+      const newEntries = data.segments.map((seg: any, index: number) => ({
+        id: Math.random().toString(36).substring(2, 11) + index,
+        text: seg.text || '',
+        timestamp: Date.now() + index,
+        type: seg.type || 'explanation',
+        color: seg.color || '#94a3b8',
+        slideNumber: seg.slideNumber || 1,
+      }));
+      
+      setTranscript(prev => [...prev, ...newEntries]);
+    } else {
+      console.error('❌ API error:', data.error);
+      setError(data.error || 'Transcription failed');
+    }
+  } catch (err) {
+    console.error('❌ Upload error:', err);
+    setError('Failed to process audio. Check console for details.');
+  } finally {
+    setIsUploading(false);
+    console.log('🏁 Upload complete');
+  }
+};
 
   const onDocumentLoadSuccess = ({ numPages }: { numPages: number }) => {
     setNumPages(numPages);
@@ -308,6 +372,22 @@ export default function LecturePage() {
         <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
           📄 Upload PDF Slides
         </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => document.getElementById('audioUpload')?.click()}
+          disabled={isUploading}
+        >
+          {isUploading ? '⏳ Processing...' : '📁 Upload Audio'}
+        </Button>
+
+        <input
+  id="audioUpload"
+  type="file"
+  accept=".mp3,.mp4,.wav,.m4a"
+  className="hidden"
+  onChange={handleAudioUpload}
+/>
         <input
           type="file"
           ref={fileInputRef}
