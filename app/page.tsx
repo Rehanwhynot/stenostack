@@ -46,71 +46,77 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col justify-center items-center p-6 select-none relative overflow-hidden">
+    <div className="min-h-screen bg-background flex flex-col justify-center items-center px-4 py-12 select-none relative overflow-y-auto w-full">
       
-      {/* Subtle Background Glow Decors */}
+      {/* Subtle Background Grid & Glow Decors */}
+      <div className="absolute inset-0 bg-[linear-gradient(to_right,#8080800a_1px,transparent_1px),linear-gradient(to_bottom,#8080800a_1px,transparent_1px)] bg-[size:14px_24px] pointer-events-none" />
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[500px] h-[500px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
 
-      {/* Main Dashboard Card */}
-      <div className="max-w-md w-full text-center space-y-6 bg-card border rounded-2xl p-8 shadow-md relative z-10">
+      {/* Main content grouping wrapper with safe spacing gaps */}
+      <div className="max-w-4xl w-full flex flex-col items-center gap-8 relative z-10">
         
-        {/* Header Section */}
-        <div className="space-y-2">
-          <div className="text-5xl mb-2 animate-bounce duration-1000">🎓</div>
-          <h1 className="text-4xl font-extrabold tracking-tight text-foreground">StenoStack</h1>
-          <p className="text-muted-foreground text-md font-medium">
-            AI-Powered Lecture Transcription
+        {/* Main Dashboard Card */}
+        <div className="max-w-md w-full text-center space-y-6 bg-card border rounded-2xl p-8 shadow-md">
+          
+          {/* Header Section with clear typographic hierarchy */}
+          <div className="space-y-2">
+            <div className="text-5xl mb-2 animate-bounce duration-1000">🎓</div>
+            <h1 className="text-4xl font-extrabold tracking-tight text-foreground">StenoStack</h1>
+            <p className="text-xs font-bold tracking-widest text-muted-foreground/80 uppercase">
+              AI-Powered Lecture Transcription
+            </p>
+            <div className="inline-block bg-primary/10 text-primary text-[10px] font-bold px-2.5 py-1 rounded-full mt-2">
+              No upfront files required
+            </div>
+          </div>
+
+          {/* Action Interface (Primary CTA vs Secondary Link) */}
+          <div className="flex flex-col items-center gap-4 w-full pt-4">
+            
+            {/* Primary Action Button */}
+            <Button 
+              className="px-8 py-6 text-base font-semibold shadow-md hover:shadow-lg transition-all w-full flex items-center justify-center gap-2"
+              onClick={() => setIsModalOpen(true)}
+              disabled={isRedirecting}
+            >
+              <span>📝</span> Start New Lecture
+            </Button>
+
+            {/* Secondary Action Link (Reduces design clutter and matches visual weight) */}
+            <button
+              type="button"
+              className="text-sm font-semibold text-muted-foreground hover:text-foreground hover:underline transition-all py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 rounded"
+              onClick={goToLiveLecture}
+              disabled={isRedirecting}
+            >
+              🎙️ Quick Start (Live Recording)
+            </button>
+          </div>
+
+          <p className="text-xs text-muted-foreground pt-2">
+            💡 You can upload slides and take notes later inside the workspace.
           </p>
-          <div className="inline-block bg-primary/10 text-primary text-xs font-semibold px-2.5 py-1 rounded-full mt-2">
-            No upfront files required
+        </div>
+
+        {/* Feature Grid Container */}
+        <div className="max-w-3xl w-full grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="border bg-card/50 p-4 rounded-xl text-center space-y-1">
+            <span className="text-xl">🎙️</span>
+            <h4 className="text-sm font-semibold text-foreground">Live Dictation</h4>
+            <p className="text-xs text-muted-foreground">Zero-latency speech capture directly from your browser mic.</p>
+          </div>
+          <div className="border bg-card/50 p-4 rounded-xl text-center space-y-1">
+            <span className="text-xl">🎨</span>
+            <h4 className="text-sm font-semibold text-foreground">Semantic Color Tags</h4>
+            <p className="text-xs text-muted-foreground">Speech is classified into color-coded Code, Math, and Diagrams.</p>
+          </div>
+          <div className="border bg-card/50 p-4 rounded-xl text-center space-y-1">
+            <span className="text-xl">📝</span>
+            <h4 className="text-sm font-semibold text-foreground">Interactive Notes</h4>
+            <p className="text-xs text-muted-foreground">Take persistent study notes linked directly to your active slides.</p>
           </div>
         </div>
 
-        {/* Action Button Stack */}
-        <div className="flex flex-col gap-3 w-full pt-4">
-          
-          {/* Option 1: Standard Guided Start */}
-          <Button 
-            className="px-8 py-6 text-base font-semibold shadow hover:shadow-md transition-all w-full flex items-center justify-center gap-2"
-            onClick={() => setIsModalOpen(true)}
-            disabled={isRedirecting}
-          >
-            <span>📝</span> Start New Lecture
-          </Button>
-
-          {/* Option 2: Quick Start Bypass */}
-          <Button 
-            className="px-8 py-6 text-base font-semibold transition-all w-full flex items-center justify-center gap-2"
-            variant="outline"
-            onClick={goToLiveLecture}
-            disabled={isRedirecting}
-          >
-            <span>🎙️</span> Quick Start (Live Recording)
-          </Button>
-        </div>
-
-        <p className="text-xs text-muted-foreground pt-2">
-          💡 You can upload slides and take notes later inside the workspace.
-        </p>
-      </div>
-
-      {/* High-Value Feature Grid (communicates key capabilities immediately) */}
-      <div className="max-w-3xl w-full grid grid-cols-1 md:grid-cols-3 gap-4 mt-12 relative z-10">
-        <div className="border bg-card/50 p-4 rounded-xl text-center space-y-1">
-          <span className="text-xl">🎙️</span>
-          <h4 className="text-sm font-semibold text-foreground">Live Dictation</h4>
-          <p className="text-xs text-muted-foreground">Zero-latency speech capture directly from your browser mic.</p>
-        </div>
-        <div className="border bg-card/50 p-4 rounded-xl text-center space-y-1">
-          <span className="text-xl">🎨</span>
-          <h4 className="text-sm font-semibold text-foreground">Semantic Color Tags</h4>
-          <p className="text-xs text-muted-foreground">Speech is classified into color-coded Code, Math, and Diagrams.</p>
-        </div>
-        <div className="border bg-card/50 p-4 rounded-xl text-center space-y-1">
-          <span className="text-xl">📝</span>
-          <h4 className="text-sm font-semibold text-foreground">Interactive Notes</h4>
-          <p className="text-xs text-muted-foreground">Take persistent study notes linked directly to your active slides.</p>
-        </div>
       </div>
 
       {/* Modal: Enter Lecture Title */}
